@@ -1,0 +1,7 @@
+﻿  glvk.cpp
+C:\Users\nik\source\repos\vulkan\vulkan\GL\glvk.cpp(209,122): warning C4244: '+=': conversion from 'float' to 'size_t', possible loss of data
+C:\Users\nik\source\repos\vulkan\vulkan\GL\glvk.cpp(381,25): warning C4244: '=': conversion from 'GLsizei' to 'float', possible loss of data
+C:\Users\nik\source\repos\vulkan\vulkan\GL\glvk.cpp(382,26): warning C4244: '=': conversion from 'GLsizei' to 'float', possible loss of data
+C:\Users\nik\source\repos\vulkan\vulkan\GL\glvk.cpp(383,21): warning C4244: '=': conversion from 'GLint' to 'float', possible loss of data
+C:\Users\nik\source\repos\vulkan\vulkan\GL\glvk.cpp(384,21): warning C4244: '=': conversion from 'GLint' to 'float', possible loss of data
+  vulkan.vcxproj -> C:\Users\nik\source\repos\vulkan\x64\Debug\vulkan.exe

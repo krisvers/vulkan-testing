@@ -2,16 +2,21 @@
 #include <fstream>
 #include <stdexcept>
 #include <vector>
-#include <cstring>
 #include <limits>
 #include <functional>
-#include "common.hpp"
+#include <format>
+
+#include "GL/glvk.hpp"
+#include "ktga.hpp"
+#include "kobj.hpp"
+
+#include <cstring>
 
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_win32.h>
 
-#define VK_CALL(l) { VkResult vr = l; if (vr != VK_SUCCESS) { if (vr != VK_INCOMPLETE) { std::cerr << "Vulkan call failed: " << vr << "\n"; throw std::runtime_error("Vulkan call failed"); } else { std::cout << "Warning: Vulkan call returned incomplete\n"; } } }
+#define VK_CALL(l) { VkResult vr = l; if (vr != VK_SUCCESS) { if (vr != VK_INCOMPLETE) { std::cerr << __FILE__ << ":" << __LINE__ << " Vulkan call failed: " << vr << "\n"; throw std::runtime_error(std::format("{}:{} Vulkan call failed", __FILE__, __LINE__)); } else { std::cout << "Warning: Vulkan call returned incomplete\n"; } } }
 #define VK_UNMAKE_VERSION_MAJOR(v) ((v) >> 22)
 #define VK_UNMAKE_VERSION_MINOR(v) (((v) >> 12) & 0x3ff)
 #define VK_UNMAKE_VERSION_PATCH(v) ((v) & 0xfff)
@@ -19,12 +24,13 @@
 #define VK_DEBUG_INFO
 #define VK_DEBUG
 
+/*
 void vk_init(vulkan_t & vulkan);
 void vk_deinit(vulkan_t & vulkan);
+static vulkan_t * pvulkan = nullptr;
+*/
 
 bool running = true;
-
-static vulkan_t * pvulkan = nullptr;
 
 LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 	switch (msg) {
@@ -36,11 +42,6 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
 				uint32_t w = LOWORD(lparam);
 				uint32_t h = HIWORD(lparam);
 
-				if ((pvulkan->window_width != w || pvulkan->window_height != h) && (w != 0 && h != 0)) {
-					pvulkan->window_width = w;
-					pvulkan->window_height = h;
-					vk_recreate_swapchain(*pvulkan);
-				}
 				return 0;
 			}
 		default:
@@ -48,7 +49,174 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
 	}
 }
 
+int main(int argc, char ** argv) {
+	WNDCLASSEXA window_class = {
+		.cbSize = sizeof(window_class),
+		.style = CS_HREDRAW | CS_VREDRAW,
+		.lpfnWndProc = (WNDPROC) window_proc,
+		.cbClsExtra = 0,
+		.cbWndExtra = 0,
+		.hInstance = GetModuleHandleA(nullptr),
+		.hIcon = LoadIcon(nullptr, IDC_ARROW),
+		.hCursor = LoadCursor(nullptr, IDC_ARROW),
+		.hbrBackground = (HBRUSH) GetStockObject(0),
+		.lpszMenuName = "menu name",
+		.lpszClassName = "Window Class",
+		.hIconSm = (HICON) LoadImageA(GetModuleHandleA(nullptr), MAKEINTRESOURCEA(5), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR),
+	};
+
+	if (RegisterClassExA(&window_class) == 0) {
+		std::cout << "Failed to register window class\n";
+		throw std::runtime_error("Failed to register window class");
+	}
+
+	HWND hwnd;
+
+	{
+
+		RECT rect = {
+			.left = 0,
+			.top = 0,
+			.right = 800,
+			.bottom = 600,
+		};
+
+		AdjustWindowRectEx(&rect, WS_OVERLAPPEDWINDOW, FALSE, 0);
+
+		hwnd = CreateWindowExA(0, window_class.lpszClassName, "krisvers' vulkan testing", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top, NULL, NULL, window_class.hInstance, NULL);
+		if (hwnd == nullptr) {
+			std::cout << "Failed to create window\n";
+			return 1;
+		}
+	}
+
+	ShowWindow(hwnd, SW_SHOW);
+	UpdateWindow(hwnd);
+
+	glvkDebug();
+	glvkRegisterDebugCallback(
+		[](const char * message, GLVKseverity severity, GLVKtype type) {
+			std::cout << "GLVK debug message: " << message << "\n";
+		}
+	);
+
+	if (!glvkInit(hwnd)) {
+		std::cout << "Failed to initialize glvk\n";
+		return 2;
+	}
+
+	while (running) {
+		MSG msg;
+		while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
+			TranslateMessage(&msg);
+			DispatchMessageA(&msg);
+		}
+	}
+
+	glvkDeinit();
+
+	/*
+	vulkan_t vulkan = {
+		.instance = VK_NULL_HANDLE,
+		.allocator = nullptr,
+		.physical = VK_NULL_HANDLE,
+		.device = VK_NULL_HANDLE,
+		.surface = VK_NULL_HANDLE,
+
+		.swapchain = VK_NULL_HANDLE,
+
+		.cmd_pool = VK_NULL_HANDLE,
+
+		.frames_in_flight = 2,
+
+		.vertex_shader = VK_NULL_HANDLE,
+		.fragment_shader = VK_NULL_HANDLE,
+		.pipeline_layout = VK_NULL_HANDLE,
+		.pipeline = VK_NULL_HANDLE,
+		.render_pass = VK_NULL_HANDLE,
+
+		.present_queue = VK_NULL_HANDLE,
+		.graphics_queue = VK_NULL_HANDLE,
+
+		.graphics_family = std::numeric_limits<uint32_t>::max(),
+		.present_family = std::numeric_limits<uint32_t>::max(),
+
+		.window_width = 800,
+		.window_height = 600,
+		.hwnd = nullptr,
+		.hinstance = GetModuleHandleA(nullptr),
+
+		.debug_messenger = VK_NULL_HANDLE,
+	};
+
+	pvulkan = &vulkan;
+
+	{
+		RECT rect = {
+			.left = 0,
+			.top = 0,
+			.right = static_cast<LONG>(vulkan.window_width),
+			.bottom = static_cast<LONG>(vulkan.window_height),
+		};
+		AdjustWindowRectEx(&rect, WS_OVERLAPPEDWINDOW, FALSE, 0);
+
+		vulkan.hwnd = CreateWindowExA(0, window_class.lpszClassName, "krisvers' vulkan testing", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top, NULL, NULL, window_class.hInstance, NULL);
+		if (vulkan.hwnd == NULL) {
+			std::cout << "Failed to create window\n";
+			throw std::runtime_error("Failed to create window");
+		}
+	}
+
+	vk_init(vulkan);
+
+	LARGE_INTEGER perf_freq;
+	QueryPerformanceFrequency(&perf_freq);
+
+	LARGE_INTEGER start;
+	LARGE_INTEGER end;
+
+	double tdelta = 1 / vulkan.target_fps;
+	double delta = 0;
+
+	while (running) {
+		QueryPerformanceCounter(&start);
+		vk_draw_frame(vulkan);
+		QueryPerformanceCounter(&end);
+		#ifdef VK_DEBUG_INFO
+		std::cout << "Frame time: " << static_cast<double>(end.QuadPart - start.QuadPart) / static_cast<double>(perf_freq.QuadPart) << "\n";
+		#endif
+
+		MSG msg;
+		while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
+			TranslateMessage(&msg);
+			DispatchMessageA(&msg);
+		}
+
+		QueryPerformanceCounter(&end);
+		delta = static_cast<double>(end.QuadPart - start.QuadPart) / static_cast<double>(perf_freq.QuadPart);
+		double remaining = tdelta - delta;
+
+		if (remaining > 0) {
+			DWORD ms = static_cast<DWORD>(remaining * 1000);
+
+			if (ms > 0) {
+				Sleep(ms - 1);
+			}
+		}
+
+		//vk_frames_in_flight(vulkan, vulkan.frames_in_flight + 1);
+	}
+
+	vk_deinit(vulkan);
+	*/
+
+	return 0;
+}
+
+/*
+float counter = 0;
 void vk_draw_frame(vulkan_t & vulkan) {
+	++counter;
 	{
 		RECT rect;
 		RECT borders;
@@ -67,6 +235,21 @@ void vk_draw_frame(vulkan_t & vulkan) {
 		if (width <= 0 || height <= 0 || wwb <= 0 || hwb <= 0) {
 			return;
 		}
+	}
+
+	{
+		uniform_t * ubo = reinterpret_cast<uniform_t *>(vulkan.unif_mappeds[vulkan.current_frame]);
+		mat4x4_identity(ubo->model);
+		mat4x4_translate(ubo->model, 0, 0, -1);
+		mat4x4_rotate(ubo->model, ubo->model, 0, 1, 0, counter / 15);
+		mat4x4_scale_aniso(ubo->model, ubo->model, 0.1f, 0.1f, 0.1f);
+
+		mat4x4_identity(ubo->view);
+		ubo->view[1][1] *= -1;
+		mat4x4_identity(ubo->proj);
+		float aspect = static_cast<float>(vulkan.swapchain_extent.width) / static_cast<float>(vulkan.swapchain_extent.height);
+		mat4x4_perspective(ubo->proj, 1, aspect, 0.05f, 100.0f);
+		//mat4x4_ortho(ubo->proj, -1, 1, 1 / -aspect, 1 / aspect, -100, 100);
 	}
 
 	vkWaitForFences(vulkan.device, 1, &vulkan.fences_flight[vulkan.current_frame], VK_TRUE, std::numeric_limits<uint64_t>::max());
@@ -93,7 +276,10 @@ void vk_draw_frame(vulkan_t & vulkan) {
 
 	vkCmdPipelineBarrier(vulkan.cmd_buffers[vulkan.current_frame], VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
 
-	VkClearValue clear = { { { 0.1f, 0.1f, 0.1f, 1.0f } } };
+	VkClearValue clears[2] = {
+		{ { { 0.1f, 0.1f, 0.1f, 1.0f } } },
+		{ 1.0f, 0.0f },
+	};
 
 	vulkan.scissor = {
 		.offset = { 0, 0 },
@@ -115,8 +301,8 @@ void vk_draw_frame(vulkan_t & vulkan) {
 		.renderPass = vulkan.render_pass,
 		.framebuffer = vulkan.framebuffers[image_index],
 		.renderArea = vulkan.scissor,
-		.clearValueCount = 1,
-		.pClearValues = &clear,
+		.clearValueCount = 2,
+		.pClearValues = clears,
 	};
 
 	vkCmdBeginRenderPass(vulkan.cmd_buffers[vulkan.current_frame], &rp_info, VK_SUBPASS_CONTENTS_INLINE);
@@ -125,6 +311,7 @@ void vk_draw_frame(vulkan_t & vulkan) {
 	VkDeviceSize offset = 0;
 	vkCmdBindVertexBuffers(vulkan.cmd_buffers[vulkan.current_frame], 0, 1, &vulkan.mesh_buffer, &offset);
 	vkCmdBindIndexBuffer(vulkan.cmd_buffers[vulkan.current_frame], vulkan.mesh_buffer, sizeof(vertex_t) * vulkan.mesh_vertex_count, VK_INDEX_TYPE_UINT32);
+	vkCmdBindDescriptorSets(vulkan.cmd_buffers[vulkan.current_frame], VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan.pipeline_layout, 0, 1, vulkan.desc_sets.data(), 0, nullptr);
 
 	vkCmdSetViewport(vulkan.cmd_buffers[vulkan.current_frame], 0, 1, &vulkan.viewport);
 	vkCmdSetScissor(vulkan.cmd_buffers[vulkan.current_frame], 0, 1, &vulkan.scissor);
@@ -166,124 +353,6 @@ void vk_draw_frame(vulkan_t & vulkan) {
 	if (vulkan.current_frame >= vulkan.frames_in_flight) {
 		vulkan.current_frame = 0;
 	}
-}
-
-int main(int argc, char ** argv) {
-	WNDCLASSEXA window_class = {
-		.cbSize = sizeof(window_class),
-		.style = CS_HREDRAW | CS_VREDRAW,
-		.lpfnWndProc = (WNDPROC) window_proc,
-		.cbClsExtra = 0,
-		.cbWndExtra = 0,
-		.hInstance = GetModuleHandleA(nullptr),
-		.hIcon = LoadIcon(nullptr, IDC_ARROW),
-		.hCursor = LoadCursor(nullptr, IDC_ARROW),
-		.hbrBackground = (HBRUSH) GetStockObject(0),
-		.lpszMenuName = "menu name",
-		.lpszClassName = "Window Class",
-		.hIconSm = (HICON) LoadImageA(GetModuleHandleA(nullptr), MAKEINTRESOURCEA(5), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR),
-	};
-
-	if (RegisterClassExA(&window_class) == 0) {
-		std::cout << "Failed to register window class\n";
-		throw std::runtime_error("Failed to register window class");
-	}
-
-	vulkan_t vulkan = {
-		.instance = VK_NULL_HANDLE,
-		.allocator = nullptr,
-		.physical = VK_NULL_HANDLE,
-		.device = VK_NULL_HANDLE,
-		.surface = VK_NULL_HANDLE,
-
-		.swapchain = VK_NULL_HANDLE,
-
-		.cmd_pool = VK_NULL_HANDLE,
-
-		.vertex_shader = VK_NULL_HANDLE,
-		.fragment_shader = VK_NULL_HANDLE,
-		.pipeline_layout = VK_NULL_HANDLE,
-		.pipeline = VK_NULL_HANDLE,
-		.render_pass = VK_NULL_HANDLE,
-
-		.present_queue = VK_NULL_HANDLE,
-		.graphics_queue = VK_NULL_HANDLE,
-
-		.graphics_family = std::numeric_limits<uint32_t>::max(),
-		.present_family = std::numeric_limits<uint32_t>::max(),
-
-		.frames_in_flight = 2,
-
-		.window_width = 800,
-		.window_height = 600,
-		.hwnd = nullptr,
-		.hinstance = GetModuleHandleA(nullptr),
-
-		.debug_messenger = VK_NULL_HANDLE,
-	};
-
-	pvulkan = &vulkan;
-
-	{
-		RECT rect = {
-			.left = 0,
-			.top = 0,
-			.right = static_cast<LONG>(vulkan.window_width),
-			.bottom = static_cast<LONG>(vulkan.window_height),
-		};
-		AdjustWindowRectEx(&rect, WS_OVERLAPPEDWINDOW, FALSE, 0);
-
-		vulkan.hwnd = CreateWindowExA(0, window_class.lpszClassName, "krisvers' vulkan testing", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top, NULL, NULL, window_class.hInstance, NULL);
-		if (vulkan.hwnd == NULL) {
-			std::cout << "Failed to create window\n";
-			throw std::runtime_error("Failed to create window");
-		}
-	}
-
-	vk_init(vulkan);
-
-	ShowWindow(vulkan.hwnd, SW_SHOW);
-	UpdateWindow(vulkan.hwnd);
-
-	LARGE_INTEGER perf_freq;
-	QueryPerformanceFrequency(&perf_freq);
-
-	LARGE_INTEGER start;
-	LARGE_INTEGER end;
-
-	double tdelta = 1 / vulkan.target_fps;
-	double delta = 0;
-
-	while (running) {
-		QueryPerformanceCounter(&start);
-		vk_draw_frame(vulkan);
-		QueryPerformanceCounter(&end);
-		#ifdef VK_DEBUG_INFO
-		std::cout << "Frame time: " << static_cast<double>(end.QuadPart - start.QuadPart) / static_cast<double>(perf_freq.QuadPart) << "\n";
-		#endif
-
-		MSG msg;
-		while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
-			TranslateMessage(&msg);
-			DispatchMessageA(&msg);
-		}
-
-		QueryPerformanceCounter(&end);
-		delta = static_cast<double>(end.QuadPart - start.QuadPart) / static_cast<double>(perf_freq.QuadPart);
-		double remaining = tdelta - delta;
-
-		if (remaining > 0) {
-			DWORD ms = static_cast<DWORD>(remaining * 1000);
-
-			if (ms > 0) {
-				Sleep(ms - 1);
-			}
-		}
-	}
-
-	vk_deinit(vulkan);
-
-	return 0;
 }
 
 void vk_init(vulkan_t & vulkan) {
@@ -410,9 +479,12 @@ void vk_init(vulkan_t & vulkan) {
 	}
 
 	vk_init_pipeline(vulkan, v_spv, f_spv);
-	vk_init_framebuffers(vulkan);
 	vk_create_command_utils(vulkan);
-	vk_create_vbo(vulkan);
+	vk_create_depth(vulkan);
+	vk_init_framebuffers(vulkan);
+	vk_create_buffers(vulkan);
+	vk_create_texture(vulkan);
+	vk_create_descriptor_utilities(vulkan);
 	vk_create_semaphores(vulkan);
 }
 
@@ -425,8 +497,25 @@ void vk_deinit(vulkan_t & vulkan) {
 		vkDestroySemaphore(vulkan.device, vulkan.semaphores_img_avail[i], vulkan.allocator);
 	}
 
+	vkDestroyDescriptorPool(vulkan.device, vulkan.desc_pool, vulkan.allocator);
+
+	vkDestroySampler(vulkan.device, vulkan.texture_sampler, vulkan.allocator);
+	vkDestroyImageView(vulkan.device, vulkan.texture_view, vulkan.allocator);
+
+	vkDestroyImage(vulkan.device, vulkan.texture, vulkan.allocator);
+	vkFreeMemory(vulkan.device, vulkan.texture_memory, vulkan.allocator);
+
+	for (uint32_t i = 0; i < vulkan.frames_in_flight; ++i) {
+		vkDestroyBuffer(vulkan.device, vulkan.unif_buffers[i], vulkan.allocator);
+		vkFreeMemory(vulkan.device, vulkan.unif_memorys[i], vulkan.allocator);
+	}
+
 	vkDestroyBuffer(vulkan.device, vulkan.mesh_buffer, vulkan.allocator);
 	vkFreeMemory(vulkan.device, vulkan.mesh_memory, vulkan.allocator);
+
+	vkDestroyImage(vulkan.device, vulkan.depth, vulkan.allocator);
+	vkFreeMemory(vulkan.device, vulkan.depth_memory, vulkan.allocator);
+	vkDestroyImageView(vulkan.device, vulkan.depth_view, vulkan.allocator);
 
 	vkDestroyCommandPool(vulkan.device, vulkan.cmd_pool, vulkan.allocator);
 
@@ -437,6 +526,7 @@ void vk_deinit(vulkan_t & vulkan) {
 	vkDestroyPipeline(vulkan.device, vulkan.pipeline, vulkan.allocator);
 	vkDestroyPipelineLayout(vulkan.device, vulkan.pipeline_layout, vulkan.allocator);
 	vkDestroyRenderPass(vulkan.device, vulkan.render_pass, vulkan.allocator);
+	vkDestroyDescriptorSetLayout(vulkan.device, vulkan.desc_layout, vulkan.allocator);
 
 	vkDestroyShaderModule(vulkan.device, vulkan.fragment_shader, vulkan.allocator);
 	vkDestroyShaderModule(vulkan.device, vulkan.vertex_shader, vulkan.allocator);
@@ -463,7 +553,6 @@ void vk_deinit(vulkan_t & vulkan) {
 }
 
 void vk_create_instance(vulkan_t & vulkan, VkApplicationInfo app_info, const std::vector<layer_t> & requested_layers, const std::vector<extension_t> & requested_extensions) {
-
 	uint32_t layer_prop_count = 0;
 	VK_CALL(vkEnumerateInstanceLayerProperties(&layer_prop_count, nullptr));
 
@@ -786,8 +875,6 @@ void vk_create_device(vulkan_t & vulkan, std::vector<layer_t> & requested_layers
 		std::cout << "Failed to find any Vulkan present queue family\n";
 		throw std::runtime_error("Failed to find any Vulkan present queue family");
 	}
-
-	VkPhysicalDeviceFeatures physical_feats = {};
 	
 	uint32_t layer_prop_count = 0;
 	vkEnumerateDeviceLayerProperties(vulkan.physical, &layer_prop_count, nullptr);
@@ -904,6 +991,10 @@ void vk_create_device(vulkan_t & vulkan, std::vector<layer_t> & requested_layers
 			});
 		}
 	}
+
+	VkPhysicalDeviceFeatures physical_feats = {
+		.samplerAnisotropy = VK_TRUE,
+	};
 
 	VkDeviceCreateInfo create_info = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -1245,8 +1336,6 @@ void vk_init_pipeline(vulkan_t & vulkan, const std::vector<unsigned char> & vert
 		.alphaToOneEnable = VK_FALSE,
 	};
 
-	/* insert depth buffer and stenciling here */
-
 	VkPipelineColorBlendAttachmentState cba_state = {
 		.blendEnable = VK_FALSE,
 		.srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
@@ -1269,17 +1358,59 @@ void vk_init_pipeline(vulkan_t & vulkan, const std::vector<unsigned char> & vert
 		.blendConstants = { 0.0f, 0.0f, 0.0f, 0.0f },
 	};
 
+	{
+		VkDescriptorSetLayoutBinding bindings[2] = {
+			{
+				.binding = 0,
+				.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				.descriptorCount = 1,
+				.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+				.pImmutableSamplers = nullptr,
+			},
+			{
+				.binding = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = 1,
+				.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+				.pImmutableSamplers = nullptr,
+			},
+		};
+
+		VkDescriptorSetLayoutCreateInfo layout_create_info = {
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+			.pNext = nullptr,
+			.flags = 0,
+			.bindingCount = 2,
+			.pBindings = bindings,
+		};
+
+		VK_CALL(vkCreateDescriptorSetLayout(vulkan.device, &layout_create_info, vulkan.allocator, &vulkan.desc_layout));
+	}
+
 	VkPipelineLayoutCreateInfo layout_create_info = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
 		.pNext = nullptr,
 		.flags = 0,
-		.setLayoutCount = 0,
-		.pSetLayouts = nullptr,
+		.setLayoutCount = 1,
+		.pSetLayouts = &vulkan.desc_layout,
 		.pushConstantRangeCount = 0,
 		.pPushConstantRanges = nullptr,
 	};
 
 	VK_CALL(vkCreatePipelineLayout(vulkan.device, &layout_create_info, vulkan.allocator, &vulkan.pipeline_layout));
+
+	VkPipelineDepthStencilStateCreateInfo dss_create_info = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+		.pNext = nullptr,
+		.flags = 0,
+		.depthTestEnable = VK_TRUE,
+		.depthWriteEnable = VK_TRUE,
+		.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
+		.depthBoundsTestEnable = VK_FALSE,
+		.stencilTestEnable = VK_FALSE,
+		.front = {},
+		.back = {},
+	};
 
 	VkGraphicsPipelineCreateInfo pipeline_create_info = {
 		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
@@ -1293,35 +1424,53 @@ void vk_init_pipeline(vulkan_t & vulkan, const std::vector<unsigned char> & vert
 		.pViewportState = &vs_create_info,
 		.pRasterizationState = &rs_create_info,
 		.pMultisampleState = &ms_create_info,
-		.pDepthStencilState = nullptr,
+		.pDepthStencilState = &dss_create_info,
 		.pColorBlendState = &cb_create_info,
 		.pDynamicState = &ds_create_info,
 		.layout = vulkan.pipeline_layout,
 		.renderPass = vulkan.render_pass,
 		.subpass = 0,
 		.basePipelineHandle = VK_NULL_HANDLE,
-		.basePipelineIndex = -1,	
+		.basePipelineIndex = -1,
 	};
 
 	VK_CALL(vkCreateGraphicsPipelines(vulkan.device, VK_NULL_HANDLE, 1, &pipeline_create_info, vulkan.allocator, &vulkan.pipeline));
 }
 
 void vk_init_render_pass(vulkan_t & vulkan) {
-	VkAttachmentDescription attachment_desc = {
-		.flags = 0,
-		.format = vulkan.swapchain_format,
-		.samples = VK_SAMPLE_COUNT_1_BIT,
-		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-		.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-		.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-		.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-		.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+	VkAttachmentDescription descs[2] = {
+		{
+			.flags = 0,
+			.format = vulkan.swapchain_format,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+			.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+		},
+		{
+			.flags = 0,
+			.format = VK_FORMAT_D32_SFLOAT,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+			.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+		},
 	};
 
-	VkAttachmentReference attachment_ref = {
+	VkAttachmentReference color = {
 		.attachment = 0,
 		.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+	};
+
+	VkAttachmentReference depth = {
+		.attachment = 1,
+		.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
 	};
 
 	VkSubpassDescription subpass_desc = {
@@ -1330,9 +1479,9 @@ void vk_init_render_pass(vulkan_t & vulkan) {
 		.inputAttachmentCount = 0,
 		.pInputAttachments = nullptr,
 		.colorAttachmentCount = 1,
-		.pColorAttachments = &attachment_ref,
+		.pColorAttachments = &color,
 		.pResolveAttachments = nullptr,
-		.pDepthStencilAttachment = nullptr,
+		.pDepthStencilAttachment = &depth,
 		.preserveAttachmentCount = 0,
 		.pPreserveAttachments = nullptr,
 	};
@@ -1340,10 +1489,10 @@ void vk_init_render_pass(vulkan_t & vulkan) {
 	VkSubpassDependency dependency = {
 		.srcSubpass = VK_SUBPASS_EXTERNAL,
 		.dstSubpass = 0,
-		.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-		.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+		.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
 		.srcAccessMask = 0,
-		.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+		.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
 		.dependencyFlags = 0,
 	};
 
@@ -1351,8 +1500,8 @@ void vk_init_render_pass(vulkan_t & vulkan) {
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
 		.pNext = nullptr,
 		.flags = 0,
-		.attachmentCount = 1,
-		.pAttachments = &attachment_desc,
+		.attachmentCount = 2,
+		.pAttachments = descs,
 		.subpassCount = 1,
 		.pSubpasses = &subpass_desc,
 		.dependencyCount = 1,
@@ -1365,13 +1514,18 @@ void vk_init_render_pass(vulkan_t & vulkan) {
 void vk_init_framebuffers(vulkan_t & vulkan) {
 	vulkan.framebuffers.resize(vulkan.swapchain_views.size());
 	for (size_t i = 0; i < vulkan.swapchain_views.size(); ++i) {
+		VkImageView attachments[2] = {
+			vulkan.swapchain_views[i],
+			vulkan.depth_view,
+		};
+
 		VkFramebufferCreateInfo fb_create_info = {
 			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
 			.pNext = nullptr,
 			.flags = 0,
 			.renderPass = vulkan.render_pass,
-			.attachmentCount = 1,
-			.pAttachments = &vulkan.swapchain_views[i],
+			.attachmentCount = 2,
+			.pAttachments = attachments,
 			.width = vulkan.swapchain_extent.width,
 			.height = vulkan.swapchain_extent.height,
 			.layers = 1,
@@ -1444,15 +1598,20 @@ void vk_create_semaphores(vulkan_t & vulkan) {
 }
 
 void vk_frames_in_flight(vulkan_t & vulkan, uint32_t new_count) {
-	if (new_count == 0) {
+	if (new_count == 0 || new_count == vulkan.frames_in_flight) {
 		return;
 	}
+
+	vkDeviceWaitIdle(vulkan.device);
 
 	if (new_count < vulkan.frames_in_flight) {
 		for (uint32_t i = new_count; i < vulkan.frames_in_flight; ++i) {
 			vkDestroySemaphore(vulkan.device, vulkan.semaphores_img_avail[i], vulkan.allocator);
 			vkDestroySemaphore(vulkan.device, vulkan.semaphores_render_finished[i], vulkan.allocator);
 			vkDestroyFence(vulkan.device, vulkan.fences_flight[i], vulkan.allocator);
+
+			vkDestroyBuffer(vulkan.device, vulkan.unif_buffers[i], vulkan.allocator);
+			vkFreeMemory(vulkan.device, vulkan.unif_memorys[i], vulkan.allocator);
 		}
 		vkFreeCommandBuffers(vulkan.device, vulkan.cmd_pool, vulkan.frames_in_flight - new_count, &vulkan.cmd_buffers[new_count]);
 	}
@@ -1461,6 +1620,9 @@ void vk_frames_in_flight(vulkan_t & vulkan, uint32_t new_count) {
 	vulkan.semaphores_render_finished.resize(new_count);
 	vulkan.fences_flight.resize(new_count);
 	vulkan.cmd_buffers.resize(new_count);
+	vulkan.unif_buffers.resize(new_count);
+	vulkan.unif_memorys.resize(new_count);
+	vulkan.unif_mappeds.resize(new_count);
 	
 	if (new_count > vulkan.frames_in_flight) {
 		for (uint32_t i = vulkan.frames_in_flight; i < new_count; ++i) {
@@ -1479,6 +1641,9 @@ void vk_frames_in_flight(vulkan_t & vulkan, uint32_t new_count) {
 			VK_CALL(vkCreateSemaphore(vulkan.device, &semaphore_create_info, vulkan.allocator, &vulkan.semaphores_img_avail[i]));
 			VK_CALL(vkCreateSemaphore(vulkan.device, &semaphore_create_info, vulkan.allocator, &vulkan.semaphores_render_finished[i]));
 			VK_CALL(vkCreateFence(vulkan.device, &fence_create_info, vulkan.allocator, &vulkan.fences_flight[i]));
+
+			vulkan.unif_buffers[i] = vk_create_buffer(vulkan, sizeof(uniform_t), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, vulkan.unif_memorys[i]);
+			vkMapMemory(vulkan.device, vulkan.unif_memorys[i], 0, sizeof(uniform_t), 0, &vulkan.unif_mappeds[i]);
 		}
 
 		VkCommandBufferAllocateInfo cmd_alloc_info = {
@@ -1496,6 +1661,9 @@ void vk_frames_in_flight(vulkan_t & vulkan, uint32_t new_count) {
 	}
 
 	vulkan.frames_in_flight = new_count;
+
+	vkDestroyDescriptorPool(vulkan.device, vulkan.desc_pool, vulkan.allocator);
+	vk_create_descriptor_utilities(vulkan);
 }
 
 void vk_recreate_swapchain(vulkan_t & vulkan) {
@@ -1511,6 +1679,10 @@ void vk_recreate_swapchain(vulkan_t & vulkan) {
 	for (uint32_t i = 0; i < vulkan.swapchain_image_count; ++i) {
 		vkDestroyImageView(vulkan.device, vulkan.swapchain_views[i], vulkan.allocator);
 	}
+
+	vkDestroyImage(vulkan.device, vulkan.depth, vulkan.allocator);
+	vkFreeMemory(vulkan.device, vulkan.depth_memory, vulkan.allocator);
+	vkDestroyImageView(vulkan.device, vulkan.depth_view, vulkan.allocator);
 
 	vkDestroySwapchainKHR(vulkan.device, vulkan.swapchain, vulkan.allocator);
 
@@ -1553,37 +1725,81 @@ void vk_recreate_swapchain(vulkan_t & vulkan) {
 		}
 	);
 
+	vk_create_depth(vulkan);
 	vk_init_framebuffers(vulkan);
 }
 
-void vk_create_vbo(vulkan_t & vulkan) {
-	vertex_t vertices[4] = {
-		{ .pos = { .x = -1, .y = -1, .z = 0 }, .color = { .r = 1, .g = 1, .b = 0 } },
-		{ .pos = { .x =  1, .y = -1, .z = 0 }, .color = { .r = 0, .g = 1, .b = 1 } },
-		{ .pos = { .x = -1, .y =  1, .z = 0 }, .color = { .r = 1, .g = 0, .b = 1 } },
-		{ .pos = { .x =  1, .y =  1, .z = 0 }, .color = { .r = 1, .g = 1, .b = 1 } },
-	};
+void vk_create_buffers(vulkan_t & vulkan) {
+	kobj_t kobj;
+	{
+		std::ifstream file("test.obj", std::ios::ate | std::ios::binary);
+		if (!file.is_open()) {
+			std::cout << "Failed to open test.obj\n";
+			throw std::runtime_error("Failed to open test.obj");
+		}
 
-	uint32_t indices[6] = {
-		0, 2, 1,
-		1, 2, 3,
-	};
+		size_t size = file.tellg();
+		std::vector<unsigned char> bytes(size);
+		file.seekg(0);
+		file.read(reinterpret_cast<char *>(bytes.data()), size);
+		file.close();
 
-	vulkan.mesh_vertex_count = 4;
-	vulkan.mesh_index_count = 6;
+		int ret = kobj_load(&kobj, (void *) bytes.data(), bytes.size());
+		if (ret != 0) {
+			std::cout << "Failed to load test.obj\n" << ret;
+			throw std::runtime_error("Failed to load test.obj");
+		}
+	}
 
-	size_t size = sizeof(vertices) + sizeof(indices);
+	vertex_t * vertices = new vertex_t[kobj.vcount];
+	uint32_t * indices = new uint32_t[kobj.fcount * 3];
+
+	for (size_t i = 0; i < kobj.vcount; ++i) {
+		vertices[i].pos = {
+			kobj.vertices[i * 3 + 0],
+			kobj.vertices[i * 3 + 1],
+			kobj.vertices[i * 3 + 2],
+		};
+
+		vertices[i].color = { 1.0f, 1.0f, 1.0f };
+	}
+
+	for (size_t i = 0; i < kobj.fcount; ++i) {
+		if (kobj.faces[i].v1 != 0) {
+			indices[i * 3 + 0] = kobj.faces[i].v1 - 1;
+		}
+		if (kobj.faces[i].v2 != 0) {
+			indices[i * 3 + 1] = kobj.faces[i].v2 - 1;
+		}
+		if (kobj.faces[i].v3 != 0) {
+			indices[i * 3 + 2] = kobj.faces[i].v3 - 1;
+		}
+
+		if (kobj.faces[i].vt1 != 0) {
+			vertices[kobj.faces[i].v1 - 1].uv = { kobj.uvs[(kobj.faces[i].vt1 - 1) * 2 + 0], kobj.uvs[(kobj.faces[i].vt1 - 1) * 2 + 1] };
+		}
+		if (kobj.faces[i].vt2 != 0) {
+			vertices[kobj.faces[i].v2 - 1].uv = { kobj.uvs[(kobj.faces[i].vt2 - 1) * 2 + 0], kobj.uvs[(kobj.faces[i].vt2 - 1) * 2 + 1] };
+		}
+		if (kobj.faces[i].vt3 != 0) {
+			vertices[kobj.faces[i].v3 - 1].uv = { kobj.uvs[(kobj.faces[i].vt3 - 1) * 2 + 0], kobj.uvs[(kobj.faces[i].vt3 - 1) * 2 + 1] };
+		}
+	}
+
+	vulkan.mesh_vertex_count = kobj.vcount;
+	vulkan.mesh_index_count = kobj.fcount * 3;
+
+	size_t vsize = kobj.vcount * sizeof(vertex_t);
+	size_t isize = kobj.fcount * 3 * sizeof(uint32_t);
+	size_t size = vsize + isize;
 
 	VkDeviceMemory upload_memory;
 	VkBuffer upload = vk_create_buffer(vulkan, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, upload_memory);
 
 	void * memory;
 	vkMapMemory(vulkan.device, upload_memory, 0, size, 0, &memory);
-	memcpy(memory, vertices, sizeof(vertices));
-	memcpy(reinterpret_cast<void *>(reinterpret_cast<std::uintptr_t>(memory) + sizeof(vertices)), indices, sizeof(indices));
-	uint32_t * test = reinterpret_cast<uint32_t *>(reinterpret_cast<void *>(reinterpret_cast<std::uintptr_t>(memory) + sizeof(vertices)));
-	std::cout << test[0] << ", " << test[1] << ", " << test[2] << '\n';
-	std::cout << test[3] << ", " << test[4] << ", " << test[5] << '\n';
+	memcpy(memory, vertices, vsize);
+	memcpy(reinterpret_cast<void *>(reinterpret_cast<std::uintptr_t>(memory) + vsize), indices, isize);
 	vkUnmapMemory(vulkan.device, upload_memory);
 
 	vulkan.mesh_buffer = vk_create_buffer(vulkan, size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vulkan.mesh_memory);
@@ -1591,6 +1807,14 @@ void vk_create_vbo(vulkan_t & vulkan) {
 
 	vkDestroyBuffer(vulkan.device, upload, vulkan.allocator);
 	vkFreeMemory(vulkan.device, upload_memory, vulkan.allocator);
+
+	vulkan.unif_buffers.resize(vulkan.frames_in_flight);
+	vulkan.unif_memorys.resize(vulkan.frames_in_flight);
+	vulkan.unif_mappeds.resize(vulkan.frames_in_flight);
+	for (uint32_t i = 0; i < vulkan.frames_in_flight; ++i) {
+		vulkan.unif_buffers[i] = vk_create_buffer(vulkan, sizeof(uniform_t), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, vulkan.unif_memorys[i]);
+		vkMapMemory(vulkan.device, vulkan.unif_memorys[i], 0, sizeof(uniform_t), 0, &vulkan.unif_mappeds[i]);
+	}
 }
 
 VkBuffer vk_create_buffer(vulkan_t & vulkan, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props, VkDeviceMemory & memory) {
@@ -1666,3 +1890,417 @@ void vk_copy_buffer(vulkan_t & vulkan, VkBuffer src, VkBuffer dst, VkDeviceSize 
 
 	vkFreeCommandBuffers(vulkan.device, vulkan.cmd_pool, 1, &cmd_buffer);
 }
+
+void vk_create_descriptor_utilities(vulkan_t & vulkan) {
+	VkDescriptorPoolSize pool_sizes[2] = {
+		{
+			.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+			.descriptorCount = vulkan.frames_in_flight,
+		},
+		{
+			.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.descriptorCount = vulkan.frames_in_flight,
+		},
+	};
+
+	VkDescriptorPoolCreateInfo create_info = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+		.pNext = nullptr,
+		.flags = 0,
+		.maxSets = vulkan.frames_in_flight,
+		.poolSizeCount = 2,
+		.pPoolSizes = pool_sizes,
+	};
+
+	VK_CALL(vkCreateDescriptorPool(vulkan.device, &create_info, vulkan.allocator, &vulkan.desc_pool));
+
+	std::vector<VkDescriptorSetLayout> layouts(vulkan.frames_in_flight, vulkan.desc_layout);
+	VkDescriptorSetAllocateInfo alloc_info = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+		.pNext = nullptr,
+		.descriptorPool = vulkan.desc_pool,
+		.descriptorSetCount = vulkan.frames_in_flight,
+		.pSetLayouts = layouts.data(),
+	};
+
+	vulkan.desc_sets.resize(vulkan.frames_in_flight);
+	VK_CALL(vkAllocateDescriptorSets(vulkan.device, &alloc_info, vulkan.desc_sets.data()));
+
+	for (uint32_t i = 0; i < vulkan.frames_in_flight; ++i) {
+		VkDescriptorBufferInfo buffer_info = {
+			.buffer = vulkan.unif_buffers[i],
+			.offset = 0,
+			.range = sizeof(uniform_t),
+		};
+
+		VkDescriptorImageInfo image_info = {
+			.sampler = vulkan.texture_sampler,
+			.imageView = vulkan.texture_view,
+			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		};
+
+		VkWriteDescriptorSet writes[2] = {
+			{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.pNext = nullptr,
+				.dstSet = vulkan.desc_sets[i],
+				.dstBinding = 0,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				.pImageInfo = nullptr,
+				.pBufferInfo = &buffer_info,
+				.pTexelBufferView = nullptr,
+			},
+			{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.pNext = nullptr,
+				.dstSet = vulkan.desc_sets[i],
+				.dstBinding = 1,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.pImageInfo = &image_info,
+				.pBufferInfo = nullptr,
+				.pTexelBufferView = nullptr,
+			},
+		};
+
+		vkUpdateDescriptorSets(vulkan.device, 2, writes, 0, nullptr);
+	}
+}
+
+void vk_create_texture(vulkan_t & vulkan) {
+	ktga_t ktga {};
+	{
+		std::ifstream file("test.tga", std::ios::ate | std::ios::binary);
+		if (!file.is_open()) {
+			std::cout << "Failed to open test.tga\n";
+			throw std::runtime_error("Failed to open test.tga");
+		}
+
+		size_t size = file.tellg();
+		std::vector<unsigned char> bytes(size);
+		file.seekg(0);
+		file.read(reinterpret_cast<char *>(bytes.data()), size);
+		file.close();
+
+		int ret = ktga_load(&ktga, (void *) bytes.data(), bytes.size());
+		if (ret != 0) {
+			std::cout << "Failed to load test.tga\n" << ret;
+			throw std::runtime_error("Failed to load test.tga");
+		}
+	}
+
+	VkDeviceSize size = ktga.header.img_w * ktga.header.img_h * (ktga.header.bpp / 8);
+	VkDeviceMemory upload_memory;
+	VkBuffer upload = vk_create_buffer(vulkan, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, upload_memory);
+	void * memory;
+	vkMapMemory(vulkan.device, upload_memory, 0, size, 0, &memory);
+	memcpy(memory, ktga.bitmap, size);
+	vkUnmapMemory(vulkan.device, upload_memory);
+
+	ktga_destroy(&ktga);
+
+	vulkan.texture = vk_create_image(
+		vulkan,
+		{
+			.width = ktga.header.img_w,
+			.height = ktga.header.img_h,
+			.depth = 1,
+		},
+		VK_IMAGE_TYPE_2D, VK_FORMAT_B8G8R8A8_SRGB,
+		VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vulkan.texture_memory
+	);
+
+	vk_transition_image(vulkan, vulkan.texture, VK_FORMAT_B8G8R8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	vk_copy_buffer_to_image(vulkan, upload, vulkan.texture, { ktga.header.img_w, ktga.header.img_h, 1 });
+	vk_transition_image(vulkan, vulkan.texture, VK_FORMAT_B8G8R8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+	vkDestroyBuffer(vulkan.device, upload, vulkan.allocator);
+	vkFreeMemory(vulkan.device, upload_memory, vulkan.allocator);
+
+	VkImageViewCreateInfo create_info = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+		.pNext = nullptr,
+		.flags = 0,
+		.image = vulkan.texture,
+		.viewType = VK_IMAGE_VIEW_TYPE_2D,
+		.format = VK_FORMAT_B8G8R8A8_SRGB,
+		.components = {
+			.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.a = VK_COMPONENT_SWIZZLE_IDENTITY,
+		},
+		.subresourceRange = {
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.baseMipLevel = 0,
+			.levelCount = 1,
+			.baseArrayLayer = 0,
+			.layerCount = 1,
+		},
+	};
+
+	VK_CALL(vkCreateImageView(vulkan.device, &create_info, vulkan.allocator, &vulkan.texture_view));
+
+	VkPhysicalDeviceProperties props;
+	vkGetPhysicalDeviceProperties(vulkan.physical, &props);
+
+	VkPhysicalDeviceFeatures feats;
+	vkGetPhysicalDeviceFeatures(vulkan.physical, &feats);
+
+	VkSamplerCreateInfo s_create_info = {
+		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+		.pNext = nullptr,
+		.flags = 0,
+		.magFilter = VK_FILTER_NEAREST,
+		.minFilter = VK_FILTER_NEAREST,
+		.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+		.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+		.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+		.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+		.mipLodBias = 0.0f,
+		.anisotropyEnable = VK_FALSE,
+		.maxAnisotropy = 1.0f,
+		.compareEnable = VK_FALSE,
+		.compareOp = VK_COMPARE_OP_ALWAYS,
+		.minLod = 0.0f,
+		.maxLod = 0.0f,
+		.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
+		.unnormalizedCoordinates = VK_FALSE,
+	};
+
+	VK_CALL(vkCreateSampler(vulkan.device, &s_create_info, vulkan.allocator, &vulkan.texture_sampler));
+}
+
+VkImage vk_create_image(vulkan_t & vulkan, VkExtent3D extent, VkImageType type, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags props, VkDeviceMemory & memory) {
+	VkImageCreateInfo create_info = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.pNext = nullptr,
+		.flags = 0,
+		.imageType = type,
+		.format = format,
+		.extent = extent,
+		.mipLevels = 1,
+		.arrayLayers = 1,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = tiling,
+		.usage = usage,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.queueFamilyIndexCount = 0,
+		.pQueueFamilyIndices = nullptr,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+	};
+
+	VkImage image;
+	VK_CALL(vkCreateImage(vulkan.device, &create_info, vulkan.allocator, &image));
+
+	VkMemoryRequirements reqs;
+	vkGetImageMemoryRequirements(vulkan.device, image, &reqs);
+
+	VkMemoryAllocateInfo alloc_info = {
+		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+		.pNext = nullptr,
+		.allocationSize = reqs.size,
+		.memoryTypeIndex = vk_memory_type(vulkan, reqs.memoryTypeBits, props),
+	};
+
+	VK_CALL(vkAllocateMemory(vulkan.device, &alloc_info, vulkan.allocator, &memory));
+	vkBindImageMemory(vulkan.device, image, memory, 0);
+
+	return image;
+}
+
+void vk_transition_image(vulkan_t & vulkan, VkImage image, VkFormat format, VkImageLayout old_layout, VkImageLayout new_layout) {
+	VkCommandBufferAllocateInfo alloc_info = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.pNext = nullptr,
+		.commandPool = vulkan.cmd_pool,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.commandBufferCount = 1,
+	};
+
+	VkCommandBuffer cmd_buffer;
+	VK_CALL(vkAllocateCommandBuffers(vulkan.device, &alloc_info, &cmd_buffer));
+
+	vk_begin_cmd(vulkan, cmd_buffer);
+
+	VkImageMemoryBarrier barrier = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.pNext = nullptr,
+		.srcAccessMask = 0,
+		.dstAccessMask = 0,
+		.oldLayout = old_layout,
+		.newLayout = new_layout,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = image,
+		.subresourceRange = {
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.baseMipLevel = 0,
+			.levelCount = 1,
+			.baseArrayLayer = 0,
+			.layerCount = 1,
+		},
+	};
+
+	VkPipelineStageFlags src_stage;
+	VkPipelineStageFlags dst_stage;
+
+	if (new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+		barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+		
+		if (format == VK_FORMAT_D24_UNORM_S8_UINT || format == VK_FORMAT_D32_SFLOAT_S8_UINT) {
+			barrier.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+		}
+	} else {
+		barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	}
+
+	if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED && new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+		barrier.srcAccessMask = 0;
+		barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+		src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+		dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+	} else if (old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+		src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+	} else if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED && new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+		barrier.srcAccessMask = 0;
+		barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+		src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+		dst_stage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+	} else {
+		throw std::invalid_argument("Unsupported layout transition");
+	}
+
+	vkCmdPipelineBarrier(cmd_buffer, src_stage, dst_stage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+	vk_end_cmd(vulkan, cmd_buffer);
+
+	VkSubmitInfo submit_info = {
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.pNext = nullptr,
+		.waitSemaphoreCount = 0,
+		.pWaitSemaphores = nullptr,
+		.pWaitDstStageMask = nullptr,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &cmd_buffer,
+		.signalSemaphoreCount = 0,
+		.pSignalSemaphores = nullptr,
+	};
+
+	vkQueueSubmit(vulkan.graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
+	vkQueueWaitIdle(vulkan.graphics_queue);
+
+	vkFreeCommandBuffers(vulkan.device, vulkan.cmd_pool, 1, &cmd_buffer);
+}
+
+void vk_copy_buffer_to_image(vulkan_t & vulkan, VkBuffer buffer, VkImage image, VkExtent3D extent) {
+	VkCommandBufferAllocateInfo alloc_info = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.pNext = nullptr,
+		.commandPool = vulkan.cmd_pool,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.commandBufferCount = 1,
+	};
+
+	VkCommandBuffer cmd_buffer;
+	VK_CALL(vkAllocateCommandBuffers(vulkan.device, &alloc_info, &cmd_buffer));
+
+	vk_begin_cmd(vulkan, cmd_buffer);
+
+	VkBufferImageCopy region = {
+		.bufferOffset = 0,
+		.bufferRowLength = 0,
+		.bufferImageHeight = 0,
+		.imageSubresource = {
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.mipLevel = 0,
+			.baseArrayLayer = 0,
+			.layerCount = 1,
+		},
+		.imageOffset = { 0, 0, 0, },
+		.imageExtent = extent,
+	};
+
+	vkCmdCopyBufferToImage(cmd_buffer, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+	vk_end_cmd(vulkan, cmd_buffer);
+
+	VkSubmitInfo submit_info = {
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.pNext = nullptr,
+		.waitSemaphoreCount = 0,
+		.pWaitSemaphores = nullptr,
+		.pWaitDstStageMask = nullptr,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &cmd_buffer,
+		.signalSemaphoreCount = 0,
+		.pSignalSemaphores = nullptr,
+	};
+
+	vkQueueSubmit(vulkan.graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
+	vkQueueWaitIdle(vulkan.graphics_queue);
+
+	vkFreeCommandBuffers(vulkan.device, vulkan.cmd_pool, 1, &cmd_buffer);
+}
+
+void vk_create_depth(vulkan_t & vulkan) {
+	VkFormatProperties props;
+	vkGetPhysicalDeviceFormatProperties(vulkan.physical, VK_FORMAT_D32_SFLOAT, &props);
+
+	VkImageTiling tiling;
+	if (props.linearTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+		tiling = VK_IMAGE_TILING_LINEAR;
+	} else if (props.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+		tiling = VK_IMAGE_TILING_OPTIMAL;
+	} else {
+		throw std::runtime_error("Format Unsupported");
+	}
+
+	vulkan.depth = vk_create_image(
+		vulkan,
+		{
+			.width = vulkan.swapchain_extent.width,
+			.height = vulkan.swapchain_extent.height,
+			.depth = 1,
+		},
+		VK_IMAGE_TYPE_2D, VK_FORMAT_D32_SFLOAT,
+		tiling, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vulkan.depth_memory
+	);
+
+	VkImageViewCreateInfo create_info = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+		.pNext = nullptr,
+		.flags = 0,
+		.image = vulkan.depth,
+		.viewType = VK_IMAGE_VIEW_TYPE_2D,
+		.format = VK_FORMAT_D32_SFLOAT,
+		.components = {
+			.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.a = VK_COMPONENT_SWIZZLE_IDENTITY,
+		},
+		.subresourceRange = {
+			.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+			.baseMipLevel = 0,
+			.levelCount = 1,
+			.baseArrayLayer = 0,
+			.layerCount = 1,
+		},
+	};
+
+	VK_CALL(vkCreateImageView(vulkan.device, &create_info, vulkan.allocator, &vulkan.depth_view));
+	vk_transition_image(vulkan, vulkan.depth, VK_FORMAT_D32_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+}
+*/
